@@ -1,12 +1,48 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import re
+import nltk
+
+from nltk.corpus import stopwords
 
 # HEALTHSEARCH
-# Motor de Busca Híbrido
-# BM25 + Busca Semântica + RRF
 
-# 1. CORPUS MÉDICO
+st.set_page_config(
+    page_title="HealthSearch",
+    page_icon="🏥",
+    layout="wide"
+)
+
+# STOPWORDS
+
+nltk.download("stopwords")
+
+STOPWORDS_PT = set(stopwords.words("portuguese"))
+
+# PRÉ-PROCESSAMENTO
+
+def preprocessar_texto(texto):
+
+    texto = texto.lower()
+
+    texto = re.sub(
+        r"[^a-záàâãéêíóôõúç0-9\s-]",
+        " ",
+        texto
+    )
+
+    tokens = texto.split()
+
+    tokens = [
+        token
+        for token in tokens
+        if token not in STOPWORDS_PT
+    ]
+
+    return tokens
+
+# CORPUS MÉDICO
 
 documentos = [
     {
@@ -18,6 +54,7 @@ documentos = [
             "CÓD-ECG-12D em até 10 minutos."
         )
     },
+
     {
         "id": "Doc 2",
         "titulo": "Guia de Farmacologia Cardíaca",
@@ -27,6 +64,7 @@ documentos = [
             "no infarto agudo do miocárdio."
         )
     },
+
     {
         "id": "Doc 3",
         "titulo": "Diretriz de Hipertensão Arterial",
@@ -36,6 +74,7 @@ documentos = [
             "contínuo da pressão arterial na UTI."
         )
     },
+
     {
         "id": "Doc 4",
         "titulo": "Manual de AVC Isquêmico",
@@ -45,6 +84,7 @@ documentos = [
             "horas e meia do início dos sintomas."
         )
     },
+
     {
         "id": "Doc 5",
         "titulo": "Protocolo de Reanimação RCR",
@@ -54,6 +94,7 @@ documentos = [
             "precoce no código azul."
         )
     },
+
     {
         "id": "Doc 6",
         "titulo": "Procedimentos de UTI Geral",
@@ -68,20 +109,31 @@ documentos = [
 
 df = pd.DataFrame(documentos)
 
-# INTERFACE INICIAL
+# APLICAR PRÉ-PROCESSAMENTO
 
-st.set_page_config(
-    page_title="HealthSearch",
-    page_icon="🏥",
-    layout="wide"
-)
+df["tokens"] = df["conteudo"].apply(preprocessar_texto)
+
+# INTERFACE
 
 st.title("🏥 HealthSearch")
-st.subheader("Motor de Busca Híbrido — BM25 + Busca Semântica + RRF")
+
+st.subheader(
+    "Motor de Busca Híbrido — BM25 + Busca Semântica + RRF"
+)
 
 st.write(
     "Sistema de recuperação de informação médica utilizando "
     "busca léxica, busca semântica e fusão de rankings."
 )
 
-st.dataframe(df)
+# TESTE DO PRÉ-PROCESSAMENTO
+
+st.header("🔎 Teste do Pré-processamento")
+
+for _, documento in df.iterrows():
+
+    st.write(
+        f"**{documento['id']} — {documento['titulo']}**"
+    )
+
+    st.write(documento["tokens"])
