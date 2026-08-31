@@ -1,0 +1,7 @@
+streamlit
+pandas
+numpy
+rank-bm25
+sentence-transformers
+scikit-learn
+matplotlib
