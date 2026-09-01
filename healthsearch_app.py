@@ -5,8 +5,12 @@ import re
 import nltk
 
 from nltk.corpus import stopwords
+from rank_bm25 import BM25Okapi
 
-# HEALTHSEARCH
+
+# ==========================================
+# CONFIGURAÇÃO DA PÁGINA
+# ==========================================
 
 st.set_page_config(
     page_title="HealthSearch",
@@ -14,26 +18,38 @@ st.set_page_config(
     layout="wide"
 )
 
-# STOPWORDS
+
+# ==========================================
+# STOPWORDS EM PORTUGUÊS
+# ==========================================
 
 nltk.download("stopwords")
 
-STOPWORDS_PT = set(stopwords.words("portuguese"))
+STOPWORDS_PT = set(
+    stopwords.words("portuguese")
+)
 
-# PRÉ-PROCESSAMENTO
+
+# ==========================================
+# FUNÇÃO DE PRÉ-PROCESSAMENTO
+# ==========================================
 
 def preprocessar_texto(texto):
 
+    # Converter para minúsculas
     texto = texto.lower()
 
+    # Remover caracteres especiais
     texto = re.sub(
         r"[^a-záàâãéêíóôõúç0-9\s-]",
         " ",
         texto
     )
 
+    # Tokenização
     tokens = texto.split()
 
+    # Remover stopwords
     tokens = [
         token
         for token in tokens
@@ -42,9 +58,13 @@ def preprocessar_texto(texto):
 
     return tokens
 
+
+# ==========================================
 # CORPUS MÉDICO
+# ==========================================
 
 documentos = [
+
     {
         "id": "Doc 1",
         "titulo": "Protocolo Emergência ECG",
@@ -107,13 +127,66 @@ documentos = [
 ]
 
 
+# ==========================================
+# CRIAR DATAFRAME
+# ==========================================
+
 df = pd.DataFrame(documentos)
 
-# APLICAR PRÉ-PROCESSAMENTO
 
-df["tokens"] = df["conteudo"].apply(preprocessar_texto)
+# ==========================================
+# PRÉ-PROCESSAMENTO DOS DOCUMENTOS
+# ==========================================
 
+df["tokens"] = df["conteudo"].apply(
+    preprocessar_texto
+)
+
+
+# ==========================================
+# CORPUS TOKENIZADO PARA O BM25
+# ==========================================
+
+corpus_bm25 = df["tokens"].tolist()
+
+
+# ==========================================
+# CONFIGURAÇÕES DO BM25
+# ==========================================
+
+st.sidebar.header("⚙️ Configurações BM25")
+
+k1 = st.sidebar.slider(
+    "k1 — Saturação da frequência",
+    min_value=0.0,
+    max_value=3.0,
+    value=1.2,
+    step=0.1
+)
+
+b = st.sidebar.slider(
+    "b — Normalização do tamanho",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.75,
+    step=0.05
+)
+
+
+# ==========================================
+# MOTOR BM25
+# ==========================================
+
+bm25 = BM25Okapi(
+    corpus_bm25,
+    k1=k1,
+    b=b
+)
+
+
+# ==========================================
 # INTERFACE
+# ==========================================
 
 st.title("🏥 HealthSearch")
 
@@ -126,14 +199,70 @@ st.write(
     "busca léxica, busca semântica e fusão de rankings."
 )
 
-# TESTE DO PRÉ-PROCESSAMENTO
 
-st.header("🔎 Teste do Pré-processamento")
+# ==========================================
+# PESQUISA
+# ==========================================
 
-for _, documento in df.iterrows():
+st.header("🔎 Pesquisa Médica")
 
-    st.write(
-        f"**{documento['id']} — {documento['titulo']}**"
+consulta = st.text_input(
+    "Digite sua consulta:",
+    placeholder="Ex.: infarto, ECG-12D, AVC..."
+)
+
+
+# ==========================================
+# BUSCA BM25
+# ==========================================
+
+if consulta:
+
+    # Pré-processar a consulta
+    consulta_tokens = preprocessar_texto(
+        consulta
     )
 
-    st.write(documento["tokens"])
+    # Calcular os scores BM25
+    scores_bm25 = bm25.get_scores(
+        consulta_tokens
+    )
+
+    # Ordenar do maior para o menor score
+    ranking_bm25 = np.argsort(
+        scores_bm25
+    )[::-1]
+
+    # Criar tabela de resultados
+    resultados_bm25 = df.iloc[
+        ranking_bm25
+    ].copy()
+
+    # Adicionar score
+    resultados_bm25["score_bm25"] = (
+        scores_bm25[ranking_bm25]
+    )
+
+    # Adicionar posição no ranking
+    resultados_bm25["rank_bm25"] = range(
+        1,
+        len(resultados_bm25) + 1
+    )
+
+    # Selecionar colunas
+    resultados_bm25 = resultados_bm25[
+        [
+            "rank_bm25",
+            "id",
+            "titulo",
+            "score_bm25"
+        ]
+    ]
+
+    # Mostrar resultados
+    st.subheader("📊 Ranking BM25")
+
+    st.dataframe(
+        resultados_bm25,
+        use_container_width=True
+    )
