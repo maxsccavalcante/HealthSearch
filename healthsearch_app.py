@@ -6,7 +6,7 @@ import nltk
 
 from nltk.corpus import stopwords
 from rank_bm25 import BM25Okapi
-
+from sentence_transformers import SentenceTransformer
 
 # ==========================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -53,6 +53,42 @@ def preprocessar_texto(texto):
     ]
 
     return tokens
+
+df = pd.DataFrame(documentos)
+
+
+# ==========================================
+# FUNÇÃO RRF
+# ==========================================
+
+def calcular_rrf(
+    ranking_bm25,
+    ranking_semantico,
+    alpha,
+    k_rrf=60
+):
+
+    scores_rrf = np.zeros(len(df))
+
+    for rank, indice in enumerate(
+        ranking_bm25,
+        start=1
+    ):
+        scores_rrf[indice] += (
+            alpha *
+            (1 / (k_rrf + rank))
+        )
+
+    for rank, indice in enumerate(
+        ranking_semantico,
+        start=1
+    ):
+        scores_rrf[indice] += (
+            (1 - alpha) *
+            (1 / (k_rrf + rank))
+        )
+
+    return scores_rrf
 
 
 # ==========================================
@@ -145,6 +181,23 @@ df["tokens"] = df["conteudo"].apply(
 
 corpus_bm25 = df["tokens"].tolist()
 
+# ==========================================
+# MODELO DE EMBEDDINGS
+# ==========================================
+
+modelo_embedding = SentenceTransformer(
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
+
+# ==========================================
+# EMBEDDINGS DOS DOCUMENTOS
+# ==========================================
+
+embeddings_documentos = modelo_embedding.encode(
+    df["conteudo"].tolist(),
+    convert_to_numpy=True,
+    normalize_embeddings=True
+)
 
 # ==========================================
 # SIDEBAR — CONFIGURAÇÕES BM25
@@ -166,6 +219,20 @@ b = st.sidebar.slider(
     max_value=1.0,
     value=0.75,
     step=0.05
+)
+
+# ==========================================
+# CONFIGURAÇÃO DO RRF
+# ==========================================
+
+st.sidebar.header("⚖️ Configurações RRF")
+
+alpha = st.sidebar.slider(
+    "α — Peso do BM25",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.5,
+    step=0.1
 )
 
 
@@ -218,6 +285,71 @@ if consulta:
         consulta
     )
 
+    # ======================================
+# EMBEDDING DA CONSULTA
+# ======================================
+
+embedding_consulta = modelo_embedding.encode(
+    [consulta],
+    convert_to_numpy=True,
+    normalize_embeddings=True
+)
+
+scores_semanticos = (
+    embeddings_documentos @ embedding_consulta[0]
+)
+
+ranking_semantico = np.argsort(
+    scores_semanticos
+)[::-1]
+
+# ======================================
+# RANKING HÍBRIDO RRF
+# ======================================
+
+scores_rrf = calcular_rrf(
+    ranking_bm25,
+    ranking_semantico,
+    alpha
+)
+
+ranking_rrf = np.argsort(
+    scores_rrf
+)[::-1]
+
+resultados_rrf = df.iloc[
+    ranking_rrf
+].copy()
+
+resultados_rrf["score_rrf"] = (
+    scores_rrf[ranking_rrf]
+)
+
+resultados_rrf["rank_rrf"] = range(
+    1,
+    len(resultados_rrf) + 1
+)
+
+resultados_rrf = resultados_rrf[
+    [
+        "rank_rrf",
+        "id",
+        "titulo",
+        "score_rrf"
+    ]
+]
+
+with tab3:
+
+    st.subheader(
+        "🔀 Ranking Híbrido — RRF"
+    )
+
+    st.dataframe(
+        resultados_rrf,
+        use_container_width=True
+    )
+
     scores_bm25 = bm25.get_scores(
         consulta_tokens
     )
@@ -226,6 +358,149 @@ if consulta:
         scores_bm25
     )[::-1]
 
+resultados_semanticos = df.iloc[
+    ranking_semantico
+].copy()
+
+resultados_semanticos["score_semantico"] = (
+    scores_semanticos[ranking_semantico]
+)
+
+resultados_semanticos["rank_semantico"] = range(
+    1,
+    len(resultados_semanticos) + 1
+)
+
+resultados_semanticos = resultados_semanticos[
+    [
+        "rank_semantico",
+        "id",
+        "titulo",
+        "score_semantico"
+    ]
+]
+
+# ======================================
+# MATRIZ COMPARATIVA
+# ======================================
+
+rank_bm25 = np.empty(
+    len(df),
+    dtype=int
+)
+
+rank_semantico = np.empty(
+    len(df),
+    dtype=int
+)
+
+rank_rrf = np.empty(
+    len(df),
+    dtype=int
+)
+
+
+for posicao, indice in enumerate(
+    ranking_bm25,
+    start=1
+):
+    rank_bm25[indice] = posicao
+
+
+for posicao, indice in enumerate(
+    ranking_semantico,
+    start=1
+):
+    rank_semantico[indice] = posicao
+
+
+for posicao, indice in enumerate(
+    ranking_rrf,
+    start=1
+):
+    rank_rrf[indice] = posicao
+
+# ======================================
+# MATRIZ COMPARATIVA
+# ======================================
+
+rank_bm25 = np.empty(
+    len(df),
+    dtype=int
+)
+
+rank_semantico = np.empty(
+    len(df),
+    dtype=int
+)
+
+rank_rrf = np.empty(
+    len(df),
+    dtype=int
+)
+
+
+for posicao, indice in enumerate(
+    ranking_bm25,
+    start=1
+):
+    rank_bm25[indice] = posicao
+
+
+for posicao, indice in enumerate(
+    ranking_semantico,
+    start=1
+):
+    rank_semantico[indice] = posicao
+
+
+for posicao, indice in enumerate(
+    ranking_rrf,
+    start=1
+):
+    rank_rrf[indice] = posicao
+
+matriz_comparativa = df[
+    ["id", "titulo"]
+].copy()
+
+matriz_comparativa["Rank BM25"] = (
+    rank_bm25
+)
+
+matriz_comparativa["Rank Semântico"] = (
+    rank_semantico
+)
+
+matriz_comparativa["Rank RRF"] = (
+    rank_rrf
+)
+
+with tab4:
+
+    st.subheader(
+        "📋 Matriz Comparativa"
+    )
+
+    st.dataframe(
+        matriz_comparativa,
+        use_container_width=True
+    )
+st.dataframe(
+    matriz_comparativa,
+    use_container_width=True
+)
+
+with tab2:
+
+    st.subheader(
+        "🧠 Ranking Semântico"
+    )
+
+    st.dataframe(
+        resultados_semanticos,
+        use_container_width=True
+    )
 
     # ======================================
     # RESULTADOS
@@ -264,7 +539,11 @@ if consulta:
     # MOSTRAR RESULTADOS
     # ======================================
 
-    st.subheader("📊 Ranking BM25")
+ with tab1:
+
+    st.subheader(
+        "📊 Ranking Léxico — BM25"
+    )
 
     st.dataframe(
         resultados_bm25,
