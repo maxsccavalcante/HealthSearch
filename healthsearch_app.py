@@ -31,25 +31,21 @@ STOPWORDS_PT = set(
 
 
 # ==========================================
-# FUNÇÃO DE PRÉ-PROCESSAMENTO
+# PRÉ-PROCESSAMENTO
 # ==========================================
 
 def preprocessar_texto(texto):
 
-    # Converter para minúsculas
     texto = texto.lower()
 
-    # Remover caracteres especiais
     texto = re.sub(
         r"[^a-záàâãéêíóôõúç0-9\s-]",
         " ",
         texto
     )
 
-    # Tokenização
     tokens = texto.split()
 
-    # Remover stopwords
     tokens = [
         token
         for token in tokens
@@ -128,14 +124,14 @@ documentos = [
 
 
 # ==========================================
-# CRIAR DATAFRAME
+# DATAFRAME
 # ==========================================
 
 df = pd.DataFrame(documentos)
 
 
 # ==========================================
-# PRÉ-PROCESSAMENTO DOS DOCUMENTOS
+# PRÉ-PROCESSAR DOCUMENTOS
 # ==========================================
 
 df["tokens"] = df["conteudo"].apply(
@@ -144,14 +140,14 @@ df["tokens"] = df["conteudo"].apply(
 
 
 # ==========================================
-# CORPUS TOKENIZADO PARA O BM25
+# CORPUS DO BM25
 # ==========================================
 
 corpus_bm25 = df["tokens"].tolist()
 
 
 # ==========================================
-# CONFIGURAÇÕES DO BM25
+# SIDEBAR — CONFIGURAÇÕES BM25
 # ==========================================
 
 st.sidebar.header("⚙️ Configurações BM25")
@@ -174,7 +170,7 @@ b = st.sidebar.slider(
 
 
 # ==========================================
-# MOTOR BM25
+# CRIAR MOTOR BM25
 # ==========================================
 
 bm25 = BM25Okapi(
@@ -201,7 +197,7 @@ st.write(
 
 
 # ==========================================
-# PESQUISA
+# CAMPO DE PESQUISA
 # ==========================================
 
 st.header("🔎 Pesquisa Médica")
@@ -213,43 +209,47 @@ consulta = st.text_input(
 
 
 # ==========================================
-# BUSCA BM25
+# EXECUTAR BUSCA BM25
 # ==========================================
 
 if consulta:
 
-    # Pré-processar a consulta
     consulta_tokens = preprocessar_texto(
         consulta
     )
 
-    # Calcular os scores BM25
     scores_bm25 = bm25.get_scores(
         consulta_tokens
     )
 
-    # Ordenar do maior para o menor score
     ranking_bm25 = np.argsort(
         scores_bm25
     )[::-1]
 
-    # Criar tabela de resultados
+
+    # ======================================
+    # RESULTADOS
+    # ======================================
+
     resultados_bm25 = df.iloc[
         ranking_bm25
     ].copy()
 
-    # Adicionar score
+
+    # Score
     resultados_bm25["score_bm25"] = (
         scores_bm25[ranking_bm25]
     )
 
-    # Adicionar posição no ranking
+
+    # Ranking
     resultados_bm25["rank_bm25"] = range(
         1,
         len(resultados_bm25) + 1
     )
 
-    # Selecionar colunas
+
+    # Organizar colunas
     resultados_bm25 = resultados_bm25[
         [
             "rank_bm25",
@@ -259,7 +259,11 @@ if consulta:
         ]
     ]
 
-    # Mostrar resultados
+
+    # ======================================
+    # MOSTRAR RESULTADOS
+    # ======================================
+
     st.subheader("📊 Ranking BM25")
 
     st.dataframe(
