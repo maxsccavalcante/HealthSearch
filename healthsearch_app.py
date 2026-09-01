@@ -8,9 +8,7 @@ from nltk.corpus import stopwords
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 
-# ==========================================
 # CONFIGURAÇÃO DA PÁGINA
-# ==========================================
 
 st.set_page_config(
     page_title="HealthSearch",
@@ -18,21 +16,17 @@ st.set_page_config(
     layout="wide"
 )
 
+# STOPWORDS EM PORTUGUÊS (com cache)
 
-# ==========================================
-# STOPWORDS EM PORTUGUÊS
-# ==========================================
-
-nltk.download("stopwords")
-
-STOPWORDS_PT = set(
-    stopwords.words("portuguese")
-)
+@st.cache_resource
+def carregar_stopwords():
+    nltk.download("stopwords", quiet=True)
+    return set(stopwords.words("portuguese"))
 
 
-# ==========================================
+STOPWORDS_PT = carregar_stopwords()
+
 # PRÉ-PROCESSAMENTO
-# ==========================================
 
 def preprocessar_texto(texto):
 
@@ -54,46 +48,7 @@ def preprocessar_texto(texto):
 
     return tokens
 
-df = pd.DataFrame(documentos)
-
-
-# ==========================================
-# FUNÇÃO RRF
-# ==========================================
-
-def calcular_rrf(
-    ranking_bm25,
-    ranking_semantico,
-    alpha,
-    k_rrf=60
-):
-
-    scores_rrf = np.zeros(len(df))
-
-    for rank, indice in enumerate(
-        ranking_bm25,
-        start=1
-    ):
-        scores_rrf[indice] += (
-            alpha *
-            (1 / (k_rrf + rank))
-        )
-
-    for rank, indice in enumerate(
-        ranking_semantico,
-        start=1
-    ):
-        scores_rrf[indice] += (
-            (1 - alpha) *
-            (1 / (k_rrf + rank))
-        )
-
-    return scores_rrf
-
-
-# ==========================================
 # CORPUS MÉDICO
-# ==========================================
 
 documentos = [
 
@@ -158,50 +113,56 @@ documentos = [
     }
 ]
 
-
-# ==========================================
-# DATAFRAME
-# ==========================================
+# DATAFRAME (criado DEPOIS de "documentos" existir)
 
 df = pd.DataFrame(documentos)
-
-
-# ==========================================
-# PRÉ-PROCESSAR DOCUMENTOS
-# ==========================================
 
 df["tokens"] = df["conteudo"].apply(
     preprocessar_texto
 )
 
-
-# ==========================================
-# CORPUS DO BM25
-# ==========================================
-
 corpus_bm25 = df["tokens"].tolist()
 
-# ==========================================
-# MODELO DE EMBEDDINGS
-# ==========================================
+# MODELO DE EMBEDDINGS (com cache)
 
-modelo_embedding = SentenceTransformer(
-    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+@st.cache_resource
+def carregar_modelo():
+    return SentenceTransformer(
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
+
+
+modelo_embedding = carregar_modelo()
+
+
+@st.cache_data
+def gerar_embeddings_documentos(textos):
+    return modelo_embedding.encode(
+        textos,
+        convert_to_numpy=True,
+        normalize_embeddings=True
+    )
+
+
+embeddings_documentos = gerar_embeddings_documentos(
+    df["conteudo"].tolist()
 )
 
-# ==========================================
-# EMBEDDINGS DOS DOCUMENTOS
-# ==========================================
+# FUNÇÃO RRF
 
-embeddings_documentos = modelo_embedding.encode(
-    df["conteudo"].tolist(),
-    convert_to_numpy=True,
-    normalize_embeddings=True
-)
+def calcular_rrf(ranking_bm25, ranking_semantico, alpha, k_rrf=60):
 
-# ==========================================
+    scores_rrf = np.zeros(len(df))
+
+    for rank, indice in enumerate(ranking_bm25, start=1):
+        scores_rrf[indice] += alpha * (1 / (k_rrf + rank))
+
+    for rank, indice in enumerate(ranking_semantico, start=1):
+        scores_rrf[indice] += (1 - alpha) * (1 / (k_rrf + rank))
+
+    return scores_rrf
+
 # SIDEBAR — CONFIGURAÇÕES BM25
-# ==========================================
 
 st.sidebar.header("⚙️ Configurações BM25")
 
@@ -221,9 +182,7 @@ b = st.sidebar.slider(
     step=0.05
 )
 
-# ==========================================
 # CONFIGURAÇÃO DO RRF
-# ==========================================
 
 st.sidebar.header("⚖️ Configurações RRF")
 
@@ -235,10 +194,7 @@ alpha = st.sidebar.slider(
     step=0.1
 )
 
-
-# ==========================================
 # CRIAR MOTOR BM25
-# ==========================================
 
 bm25 = BM25Okapi(
     corpus_bm25,
@@ -246,10 +202,7 @@ bm25 = BM25Okapi(
     b=b
 )
 
-
-# ==========================================
 # INTERFACE
-# ==========================================
 
 st.title("🏥 HealthSearch")
 
@@ -262,10 +215,7 @@ st.write(
     "busca léxica, busca semântica e fusão de rankings."
 )
 
-
-# ==========================================
 # CAMPO DE PESQUISA
-# ==========================================
 
 st.header("🔎 Pesquisa Médica")
 
@@ -274,278 +224,95 @@ consulta = st.text_input(
     placeholder="Ex.: infarto, ECG-12D, AVC..."
 )
 
-
-# ==========================================
-# EXECUTAR BUSCA BM25
-# ==========================================
+# EXECUTAR BUSCA
 
 if consulta:
 
-    consulta_tokens = preprocessar_texto(
-        consulta
-    )
+    consulta_tokens = preprocessar_texto(consulta)
 
-    # ======================================
-# EMBEDDING DA CONSULTA
-# ======================================
+    # BM25
+    scores_bm25 = bm25.get_scores(consulta_tokens)
+    ranking_bm25 = np.argsort(scores_bm25)[::-1]
 
-embedding_consulta = modelo_embedding.encode(
-    [consulta],
-    convert_to_numpy=True,
-    normalize_embeddings=True
-)
-
-scores_semanticos = (
-    embeddings_documentos @ embedding_consulta[0]
-)
-
-ranking_semantico = np.argsort(
-    scores_semanticos
-)[::-1]
-
-# ======================================
-# RANKING HÍBRIDO RRF
-# ======================================
-
-scores_rrf = calcular_rrf(
-    ranking_bm25,
-    ranking_semantico,
-    alpha
-)
-
-ranking_rrf = np.argsort(
-    scores_rrf
-)[::-1]
-
-resultados_rrf = df.iloc[
-    ranking_rrf
-].copy()
-
-resultados_rrf["score_rrf"] = (
-    scores_rrf[ranking_rrf]
-)
-
-resultados_rrf["rank_rrf"] = range(
-    1,
-    len(resultados_rrf) + 1
-)
-
-resultados_rrf = resultados_rrf[
-    [
-        "rank_rrf",
-        "id",
-        "titulo",
-        "score_rrf"
-    ]
-]
-
-with tab3:
-
-    st.subheader(
-        "🔀 Ranking Híbrido — RRF"
-    )
-
-    st.dataframe(
-        resultados_rrf,
-        use_container_width=True
-    )
-
-    scores_bm25 = bm25.get_scores(
-        consulta_tokens
-    )
-
-    ranking_bm25 = np.argsort(
-        scores_bm25
-    )[::-1]
-
-resultados_semanticos = df.iloc[
-    ranking_semantico
-].copy()
-
-resultados_semanticos["score_semantico"] = (
-    scores_semanticos[ranking_semantico]
-)
-
-resultados_semanticos["rank_semantico"] = range(
-    1,
-    len(resultados_semanticos) + 1
-)
-
-resultados_semanticos = resultados_semanticos[
-    [
-        "rank_semantico",
-        "id",
-        "titulo",
-        "score_semantico"
-    ]
-]
-
-# ======================================
-# MATRIZ COMPARATIVA
-# ======================================
-
-rank_bm25 = np.empty(
-    len(df),
-    dtype=int
-)
-
-rank_semantico = np.empty(
-    len(df),
-    dtype=int
-)
-
-rank_rrf = np.empty(
-    len(df),
-    dtype=int
-)
-
-
-for posicao, indice in enumerate(
-    ranking_bm25,
-    start=1
-):
-    rank_bm25[indice] = posicao
-
-
-for posicao, indice in enumerate(
-    ranking_semantico,
-    start=1
-):
-    rank_semantico[indice] = posicao
-
-
-for posicao, indice in enumerate(
-    ranking_rrf,
-    start=1
-):
-    rank_rrf[indice] = posicao
-
-# ======================================
-# MATRIZ COMPARATIVA
-# ======================================
-
-rank_bm25 = np.empty(
-    len(df),
-    dtype=int
-)
-
-rank_semantico = np.empty(
-    len(df),
-    dtype=int
-)
-
-rank_rrf = np.empty(
-    len(df),
-    dtype=int
-)
-
-
-for posicao, indice in enumerate(
-    ranking_bm25,
-    start=1
-):
-    rank_bm25[indice] = posicao
-
-
-for posicao, indice in enumerate(
-    ranking_semantico,
-    start=1
-):
-    rank_semantico[indice] = posicao
-
-
-for posicao, indice in enumerate(
-    ranking_rrf,
-    start=1
-):
-    rank_rrf[indice] = posicao
-
-matriz_comparativa = df[
-    ["id", "titulo"]
-].copy()
-
-matriz_comparativa["Rank BM25"] = (
-    rank_bm25
-)
-
-matriz_comparativa["Rank Semântico"] = (
-    rank_semantico
-)
-
-matriz_comparativa["Rank RRF"] = (
-    rank_rrf
-)
-
-with tab4:
-
-    st.subheader(
-        "📋 Matriz Comparativa"
-    )
-
-    st.dataframe(
-        matriz_comparativa,
-        use_container_width=True
-    )
-st.dataframe(
-    matriz_comparativa,
-    use_container_width=True
-)
-
-with tab2:
-
-    st.subheader(
-        "🧠 Ranking Semântico"
-    )
-
-    st.dataframe(
-        resultados_semanticos,
-        use_container_width=True
-    )
-
-    # ======================================
-    # RESULTADOS
-    # ======================================
-
-    resultados_bm25 = df.iloc[
-        ranking_bm25
-    ].copy()
-
-
-    # Score
-    resultados_bm25["score_bm25"] = (
-        scores_bm25[ranking_bm25]
-    )
-
-
-    # Ranking
-    resultados_bm25["rank_bm25"] = range(
-        1,
-        len(resultados_bm25) + 1
-    )
-
-
-    # Organizar colunas
+    resultados_bm25 = df.iloc[ranking_bm25].copy()
+    resultados_bm25["score_bm25"] = scores_bm25[ranking_bm25]
+    resultados_bm25["rank_bm25"] = range(1, len(resultados_bm25) + 1)
     resultados_bm25 = resultados_bm25[
-        [
-            "rank_bm25",
-            "id",
-            "titulo",
-            "score_bm25"
-        ]
+        ["rank_bm25", "id", "titulo", "score_bm25"]
     ]
 
-
-    # ======================================
-    # MOSTRAR RESULTADOS
-    # ======================================
-
- with tab1:
-
-    st.subheader(
-        "📊 Ranking Léxico — BM25"
+    # Busca semântica
+    embedding_consulta = modelo_embedding.encode(
+        [consulta],
+        convert_to_numpy=True,
+        normalize_embeddings=True
     )
 
-    st.dataframe(
-        resultados_bm25,
-        use_container_width=True
+    scores_semanticos = embeddings_documentos @ embedding_consulta[0]
+    ranking_semantico = np.argsort(scores_semanticos)[::-1]
+
+    resultados_semanticos = df.iloc[ranking_semantico].copy()
+    resultados_semanticos["score_semantico"] = scores_semanticos[ranking_semantico]
+    resultados_semanticos["rank_semantico"] = range(1, len(resultados_semanticos) + 1)
+    resultados_semanticos = resultados_semanticos[
+        ["rank_semantico", "id", "titulo", "score_semantico"]
+    ]
+
+    # RRF
+    scores_rrf = calcular_rrf(ranking_bm25, ranking_semantico, alpha)
+    ranking_rrf = np.argsort(scores_rrf)[::-1]
+
+    resultados_rrf = df.iloc[ranking_rrf].copy()
+    resultados_rrf["score_rrf"] = scores_rrf[ranking_rrf]
+    resultados_rrf["rank_rrf"] = range(1, len(resultados_rrf) + 1)
+    resultados_rrf = resultados_rrf[
+        ["rank_rrf", "id", "titulo", "score_rrf"]
+    ]
+
+    # Matriz comparativa
+    rank_bm25_arr = np.empty(len(df), dtype=int)
+    rank_semantico_arr = np.empty(len(df), dtype=int)
+    rank_rrf_arr = np.empty(len(df), dtype=int)
+
+    for posicao, indice in enumerate(ranking_bm25, start=1):
+        rank_bm25_arr[indice] = posicao
+
+    for posicao, indice in enumerate(ranking_semantico, start=1):
+        rank_semantico_arr[indice] = posicao
+
+    for posicao, indice in enumerate(ranking_rrf, start=1):
+        rank_rrf_arr[indice] = posicao
+
+    matriz_comparativa = df[["id", "titulo"]].copy()
+    matriz_comparativa["Rank BM25"] = rank_bm25_arr
+    matriz_comparativa["Rank Semântico"] = rank_semantico_arr
+    matriz_comparativa["Rank RRF"] = rank_rrf_arr
+
+    # Tabs
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "📊 BM25",
+            "🧠 Semântico",
+            "🔀 RRF",
+            "📋 Matriz Comparativa"
+        ]
     )
+
+    with tab1:
+        st.subheader("📊 Ranking Léxico — BM25")
+        st.dataframe(resultados_bm25, use_container_width=True)
+
+    with tab2:
+        st.subheader("🧠 Ranking Semântico")
+        st.dataframe(resultados_semanticos, use_container_width=True)
+
+    with tab3:
+        st.subheader("🔀 Ranking Híbrido — RRF")
+        st.dataframe(resultados_rrf, use_container_width=True)
+
+    with tab4:
+        st.subheader("📋 Matriz Comparativa")
+        st.dataframe(matriz_comparativa, use_container_width=True)
+
+else:
+    st.info("Digite uma consulta acima para iniciar a busca.")
